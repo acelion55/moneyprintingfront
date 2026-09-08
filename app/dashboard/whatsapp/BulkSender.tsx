@@ -680,27 +680,22 @@ export default function BulkSender() {
       const personalizedMessage = baseMessage ? baseMessage.replace(/\{\{name\}\}/gi, contact.name || 'Friend') : (imageBlock?.caption || 'Hello!');
 
       try {
-        const res = await fetch('/api/whatsapp/send-message', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            recipientPhone: contact.phone,
-            messageText: personalizedMessage,
-            imageUrl: imageUrl,
-          }),
+        const res = await api.post('/whatsapp/send-message', {
+          recipientPhone: contact.phone,
+          messageText: personalizedMessage,
+          imageUrl: imageUrl,
         });
 
-        const data = await res.json();
-        if (res.ok && data.success) {
+        if (res.data && res.data.success) {
           setContacts(prev => prev.map(c => c.id === contact.id ? { ...c, status: 'sent' } : c));
           successCount++;
         } else {
-          console.error(`Failed to send to ${contact.phone}:`, data?.message);
+          console.error(`Failed to send to ${contact.phone}:`, res.data?.message);
           setContacts(prev => prev.map(c => c.id === contact.id ? { ...c, status: 'failed' } : c));
           failCount++;
         }
       } catch (err: any) {
-        console.error(`Error sending to ${contact.phone}:`, err);
+        console.error(`Error sending to ${contact.phone}:`, err?.response?.data?.message || err.message);
         setContacts(prev => prev.map(c => c.id === contact.id ? { ...c, status: 'failed' } : c));
         failCount++;
       }
