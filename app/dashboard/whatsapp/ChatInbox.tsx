@@ -186,6 +186,8 @@ export default function ChatInbox() {
           ) : (
             filteredThreads.map((thread) => {
               const isSelected = thread._id === selectedPhone;
+              const cleanSenderName = (thread.senderName || thread._id).replace(/^=/, '');
+              const cleanLastMsg = (thread.lastMessage || '').replace(/^=/, '');
               return (
                 <button
                   key={thread._id}
@@ -195,12 +197,12 @@ export default function ChatInbox() {
                   }`}
                 >
                   <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-emerald-500 to-teal-400 text-white flex items-center justify-center font-bold text-sm shadow-sm flex-shrink-0">
-                    {thread.senderName ? thread.senderName[0].toUpperCase() : 'U'}
+                    {cleanSenderName ? cleanSenderName[0].toUpperCase() : 'U'}
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center justify-between mb-1">
                       <span className="font-semibold text-sm text-slate-800 truncate">
-                        {thread.senderName || thread._id}
+                        {cleanSenderName}
                       </span>
                       <span className="text-[11px] text-slate-400 flex items-center gap-1">
                         {new Date(thread.lastTimestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
@@ -211,7 +213,7 @@ export default function ChatInbox() {
                         {thread.lastSender === 'ai' && (
                           <Sparkles className="w-3 h-3 text-emerald-600 flex-shrink-0" />
                         )}
-                        <span>{thread.lastMessage}</span>
+                        <span>{cleanLastMsg}</span>
                       </p>
                       <span className="text-[10px] bg-slate-200/80 text-slate-600 font-medium px-1.5 py-0.5 rounded-full ml-2">
                         +{thread._id.slice(-4)}
@@ -232,11 +234,11 @@ export default function ChatInbox() {
           <div className="p-4 border-b border-slate-200 bg-white flex items-center justify-between shadow-xs">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-full bg-emerald-600 text-white flex items-center justify-center font-bold text-sm">
-                {selectedThread?.senderName ? selectedThread.senderName[0].toUpperCase() : 'C'}
+                {selectedThread?.senderName ? selectedThread.senderName.replace(/^=/, '')[0].toUpperCase() : 'C'}
               </div>
               <div>
                 <h3 className="font-semibold text-slate-900 leading-tight">
-                  {selectedThread?.senderName || 'Customer'}
+                  {selectedThread?.senderName ? selectedThread.senderName.replace(/^=/, '') : 'Customer'}
                 </h3>
                 <p className="text-xs text-slate-500 flex items-center gap-1 mt-0.5">
                   <Phone className="w-3 h-3 text-emerald-600" /> +{selectedPhone}
@@ -264,6 +266,8 @@ export default function ChatInbox() {
             ) : (
               messages.map((msg) => {
                 const isUser = msg.sender === 'user';
+                const cleanMsgText = (msg.message || '').replace(/^=/, '');
+                const cleanSender = (msg.senderName || 'Customer').replace(/^=/, '');
                 return (
                   <div
                     key={msg._id}
@@ -281,7 +285,7 @@ export default function ChatInbox() {
                         {isUser ? (
                           <>
                             <User className="w-3 h-3 text-slate-400" />
-                            <span>{(msg.senderName || 'Customer').replace(/^=/, '')}</span>
+                            <span>{cleanSender}</span>
                           </>
                         ) : (
                           <>
@@ -293,7 +297,7 @@ export default function ChatInbox() {
 
                       {/* Message Content */}
                       <p className="whitespace-pre-wrap leading-relaxed">
-                        {msg.message ? msg.message.replace(/^=/, '') : ''}
+                        {cleanMsgText}
                       </p>
 
                       {/* Timestamp */}
