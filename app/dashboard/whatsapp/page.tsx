@@ -7,19 +7,10 @@ import { useAuth } from '@/lib/auth-context';
 import { toast } from 'sonner';
 import {
   Plus, Trash2, Upload, CheckCircle2, MessageSquare,
-  Users, Loader2, Send, Database, LayoutTemplate
+  Users, Loader2, Send, Database, LayoutTemplate, Zap
 } from 'lucide-react';
-import dynamic from 'next/dynamic';
 import TemplatesTab from './TemplatesTab';
-
-// Lazy-load the heavy BulkSender (has xlsx/papaparse)
-const BulkSender = dynamic(() => import('./BulkSender'), {
-  ssr: false, loading: () => (
-    <div className="flex items-center justify-center py-24 text-gray-500 gap-3">
-      <Loader2 className="w-5 h-5 animate-spin" /> Loading bulk sender...
-    </div>
-  )
-});
+import ChatInbox from './ChatInbox';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -38,12 +29,12 @@ interface FormValues {
   faqs: FAQItem[];
 }
 
-type TabId = 'knowledge' | 'templates' | 'bulk';
+type TabId = 'inbox' | 'knowledge' | 'templates';
 
 const TABS: { id: TabId; label: string; icon: React.ReactNode; badge?: string }[] = [
+  { id: 'inbox', label: 'Live Chat Inbox', icon: <MessageSquare className="w-4 h-4" />, badge: 'Realtime' },
   { id: 'knowledge', label: 'Knowledge Base', icon: <Database className="w-4 h-4" />, badge: 'AI Config' },
   { id: 'templates', label: 'Templates', icon: <LayoutTemplate className="w-4 h-4" />, badge: 'Meta API' },
-  { id: 'bulk', label: 'Send Messages', icon: <Send className="w-4 h-4" />, badge: 'Bulk' },
 ];
 
 // ─── Knowledge Base Tab (original form) ──────────────────────────────────────
@@ -311,7 +302,7 @@ function KnowledgeBaseTab() {
 // ─── Main Page with Tabs ──────────────────────────────────────────────────────
 
 export default function WhatsappPage() {
-  const [activeTab, setActiveTab] = useState<TabId>('knowledge');
+  const [activeTab, setActiveTab] = useState<TabId>('inbox');
 
   return (
     <div className="space-y-6">
@@ -342,16 +333,9 @@ export default function WhatsappPage() {
 
       {/* Tab Content */}
       <div className="min-h-[400px]">
+        {activeTab === 'inbox' && <ChatInbox />}
         {activeTab === 'knowledge' && <KnowledgeBaseTab />}
-        {activeTab === 'templates' && (
-          <TemplatesTab
-            onSelectTemplate={(tpl) => {
-              setActiveTab('bulk');
-              toast.info(`Selected template "${tpl.name}". You can send it now!`);
-            }}
-          />
-        )}
-        {activeTab === 'bulk' && <BulkSender />}
+        {activeTab === 'templates' && <TemplatesTab />}
       </div>
     </div>
   );

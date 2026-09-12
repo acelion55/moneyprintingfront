@@ -1,0 +1,1345 @@
+{
+  "name": "rag",
+  "nodes": [
+    {
+      "parameters": {
+        "jsCode": "// Start time pehle node se lein ya current time use karein\nlet startTime = Date.now();\nlet existingLogs = [];\nlet userId = '';\n\ntry {\n  const codeNodeData = $('Code in JavaScript').first().json;\n  startTime = codeNodeData._start_time || startTime;\n  existingLogs = codeNodeData._node_timestamps || [];\n  userId = codeNodeData.user_id || '';\n} catch (e) {\n  // Fallback agar node reference na mile\n}\n\nconst currentTime = Date.now();\nconst elapsedSec = ((currentTime - startTime) / 1000).toFixed(2);\n\nconst updatedLogs = [\n  ...existingLogs,\n  { node: \"AI Agent Processing\", time: `${elapsedSec}s` }\n];\n\nreturn [{\n  json: {\n    ...$json,\n    user_id: userId,\n    _start_time: startTime,\n    _node_timestamps: updatedLogs\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1632,
+        2368
+      ],
+      "id": "2e5150d8-e97f-41e6-ad30-5470f3d6040c",
+      "name": "Code in JavaScript5"
+    },
+    {
+      "parameters": {
+        "jsCode": "const now = Date.now();\n\nreturn $input.all().flatMap(item => {\n  // 1. Data handling\n  const payload = item.json.body || item.json;\n  const entry = payload?.entry?.[0];\n  const changes = entry?.changes?.[0]?.value;\n\n  // Real IP extraction (Cloudflare / Nginx Reverse Proxy / Meta Fallback)\n  const headers = $('Webhook1').first().json.headers || {};\n  const ipAddress = headers['cf-connecting-ip'] || \n                    headers['x-forwarded-for']?.split(',')[0]?.trim() || \n                    headers['x-real-ip'] || \n                    '157.240.199.60';\n\n  // 2. Status receipts drop\n  if (!changes?.messages || changes.messages.length === 0) {\n    return [];\n  }\n\n  const message = changes.messages[0];\n  const contact = changes.contacts?.[0];\n\n  let userText = '';\n  let buttonId = '';\n\n  // 3. Extract text / interactive clicks\n  if (message.type === 'text') {\n    userText = message.text?.body || '';\n  } else if (message.type === 'interactive') {\n    if (message.interactive?.type === 'button_reply') {\n      buttonId = message.interactive.button_reply.id;\n      userText = message.interactive.button_reply.title;\n    } else if (message.interactive?.type === 'list_reply') {\n      buttonId = message.interactive.list_reply.id;\n      userText = message.interactive.list_reply.title;\n    }\n  }\n\n  return {\n    json: {\n      is_valid_message: true,\n      user_id: message.from,\n      phone_number_id: changes.metadata?.phone_number_id || '',\n      user_name: contact?.profile?.name || '',\n      text: userText.trim(),\n      button_id: buttonId,\n      message_type: message.type,\n      raw_message_id: message.id,\n      ip_address: ipAddress, // Passed downstream\n      _start_time: now,\n      _node_timestamps: [{ node: \"WhatsApp Webhook\", time: \"0.00s\" }]\n    }\n  };\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -464,
+        2576
+      ],
+      "id": "50000046-7a50-4cf9-bc8b-fbbf61e75bb9",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "jsCode": "const staticData = $getWorkflowStaticData('global');\n\n// 1. Data Extract from DB API\nlet rawInput = $input.first().json;\nlet masterCards = [];\n\nif (rawInput.data && Array.isArray(rawInput.data)) {\n  masterCards = rawInput.data;\n} else if (Array.isArray(rawInput)) {\n  masterCards = rawInput;\n} else if ($json.data && Array.isArray($json.data)) {\n  masterCards = $json.data;\n} else {\n  masterCards = $input.all().map(i => i.json);\n}\n\n// 2. User Filters Retrieve Karein\nlet userId = '';\nlet buttonId = '';\nlet filterFee = 'all';\nlet filterType = 'all';\nlet leadInfo = {};\n\ntry {\n  const ifNode = $('If').first().json;\n  userId = ifNode.user_id || '';\n  buttonId = ifNode.button_id || '';\n  filterFee = ifNode.fee_preference || 'all';\n  filterType = ifNode.card_type || 'all';\n  leadInfo = ifNode.lead_info || {};\n} catch (e) {\n  try {\n    const js3Node = $('Code in JavaScript3').first().json;\n    userId = js3Node.user_id || '';\n    buttonId = js3Node.button_id || '';\n    filterFee = js3Node.fee_preference || 'all';\n    filterType = js3Node.card_type || 'all';\n    leadInfo = js3Node.lead_info || {};\n  } catch (err) {}\n}\n\n// Root node check for pagination or click\ntry {\n  const rootNode = $('Code in JavaScript').first().json;\n  if (rootNode.button_id && (rootNode.button_id.startsWith('card_page_') || rootNode.button_id.startsWith('apply_') || rootNode.button_id.startsWith('learn_more_'))) {\n    buttonId = rootNode.button_id;\n  }\n  if (!userId) userId = rootNode.user_id || '';\n} catch (err) {}\n\nif (buttonId.startsWith('filter_')) {\n  const parts = buttonId.split('_');\n  if (parts.length >= 3) {\n    filterFee = parts[1];\n    filterType = parts[2];\n  }\n}\n\nconst cleanText = (val) => (!val ? '' : String(val).replace(/<[^>]*>?/gm, '').trim());\n\n// ====================================================\n// 💡 1. LEARN MORE HANDLER\n// ====================================================\nif (buttonId.startsWith('learn_more_')) {\n  const targetId = buttonId.replace('learn_more_', '');\n  const selectedCard = masterCards.find(c => String(c.id || c.uuid || c._id || '') === targetId) || (staticData.filteredCards && staticData.filteredCards[0]);\n\n  if (selectedCard) {\n    const cardFeatures = cleanText(selectedCard.reward_points || selectedCard.rewardPoints || selectedCard.features) || 'Complimentary reward points, lounge access & merchant discounts.';\n    const cardTerms = cleanText(selectedCard.terms || selectedCard.terms_and_conditions || selectedCard.tnc) || 'Standard bank approval and KYC guidelines apply.';\n\n    const detailsText = `ℹ️ *Detailed Card Information*\\n\\n` +\n      `💳 *Card Name:* ${selectedCard.name || 'Credit Card'}\\n` +\n      `🏦 *Bank:* ${selectedCard.bank || 'Partner Bank'}\\n\\n` +\n      `🎯 *Key Features:*\\n${cardFeatures}\\n\\n` +\n      `💵 *Fees & Charges:*\\n` +\n      `• Joining Fee: ₹${selectedCard.joining_fee ?? selectedCard.joiningFee ?? 'NIL'}\\n` +\n      `• Annual/Renewal Fee: ₹${selectedCard.annual_fee ?? selectedCard.renewal_fee ?? selectedCard.annualFee ?? 'NIL'}\\n\\n` +\n      `📜 *Terms & Conditions:*\\n${cardTerms}`;\n\n    return [{\n      json: {\n        user_id: userId,\n        type: \"text\",\n        text: { preview_url: false, body: detailsText }\n      }\n    }];\n  }\n}\n\n// ====================================================\n// 💡 2. APPLY NOW HANDLER\n// ====================================================\nif (buttonId.startsWith('apply_')) {\n  const targetId = buttonId.replace('apply_', '');\n  const selectedCard = masterCards.find(c => String(c.id || c.uuid || c._id || '') === targetId) || (staticData.filteredCards && staticData.filteredCards[0]);\n\n  const fullCardId = selectedCard ? String(selectedCard.id || selectedCard.uuid || selectedCard._id || targetId) : targetId;\n  const cardName = selectedCard ? (selectedCard.name || 'Selected Card') : 'Credit Card';\n\n  const finalLead = {\n    cardId: fullCardId,\n    card_name: cardName,\n    applicant_name: leadInfo.name || 'Customer',\n    applicant_phone: leadInfo.phone || userId.replace(/\\D/g, '').slice(-10),\n    applicant_email: leadInfo.email || `${userId}@finonest.in`\n  };\n\n  return [{\n    json: {\n      user_id: userId,\n      is_lead_flow: true,\n      is_final_submit: true,\n      lead_complete: true,\n      lead_info: finalLead\n    }\n  }];\n}\n\n// ====================================================\n// 💡 3. STRICT CREDIT CARD ONLY FILTERING\n// ====================================================\nlet currentIndex = 0;\nlet filteredCards = [];\n\nif (buttonId.startsWith('card_page_')) {\n  currentIndex = parseInt(buttonId.replace('card_page_', ''), 10) || 0;\n  filteredCards = staticData.filteredCards || masterCards;\n} else {\n  // Step A: Loans aur non-credit products ko pehle hi bahar nikalna\n  const onlyCreditCards = masterCards.filter(card => {\n    const name = String(card.name || '').toLowerCase();\n    const type = String(card.type || card.product_type || '').toLowerCase();\n    \n    // Reject loans\n    if (name.includes('loan') || type.includes('loan') || name.includes('finance') || type.includes('personal_loan')) {\n      return false;\n    }\n    \n    // Status check\n    const isActive = (card.status || 'active').toLowerCase() === 'active';\n    return isActive;\n  });\n\n  // Step B: Category & Fee filter apply karna\n  filteredCards = onlyCreditCards.filter(card => {\n    const cardName = String(card.name || '').toLowerCase();\n    const cardBank = String(card.bank || '').toLowerCase();\n    const cardRewards = String(card.reward_points || card.rewardPoints || '').toLowerCase();\n    const cardFeatures = String(card.features || '').toLowerCase();\n    const combinedText = `${cardName} ${cardBank} ${cardRewards} ${cardFeatures}`;\n\n    // Fee Filter\n    const jFee = parseFloat(card.joining_fee ?? card.joiningFee ?? 0);\n    const rFee = parseFloat(card.annual_fee ?? card.renewal_fee ?? card.annualFee ?? 0);\n    const isFree = (jFee === 0 && rFee === 0) || combinedText.includes('lifetime free') || combinedText.includes('nil');\n\n    if (filterFee === 'free' && !isFree) return false;\n    if (filterFee === 'paid' && isFree) return false;\n\n    // Benefit Type Matching\n    if (filterType === 'lounge') return combinedText.includes('lounge') || combinedText.includes('airport');\n    if (filterType === 'fuel') return combinedText.includes('fuel') || combinedText.includes('petrol') || combinedText.includes('bpcl') || combinedText.includes('hpcl') || combinedText.includes('surcharge') || combinedText.includes('indianoil');\n    if (filterType === 'travel') return combinedText.includes('travel') || combinedText.includes('flight') || combinedText.includes('air') || combinedText.includes('indigo') || combinedText.includes('miles');\n    if (filterType === 'dining') return combinedText.includes('dining') || combinedText.includes('food') || combinedText.includes('swiggy') || combinedText.includes('zomato');\n    if (filterType === 'upi') return combinedText.includes('rupay') || combinedText.includes('upi');\n    if (filterType === 'utility') return combinedText.includes('utility') || combinedText.includes('bill') || combinedText.includes('recharge');\n    if (filterType === 'rewards') return combinedText.includes('reward') || combinedText.includes('point');\n    if (filterType === 'shopping') return combinedText.includes('shopping') || combinedText.includes('cashback') || combinedText.includes('amazon') || combinedText.includes('flipkart');\n\n    return true;\n  });\n\n  // Safe fallback (Agar specific benefit card na mile, toh sirf matching fee wale CREDIT CARDS dikhayein, loan nahi)\n  if (filteredCards.length === 0) {\n    filteredCards = onlyCreditCards.filter(card => {\n      const jFee = parseFloat(card.joining_fee || 0);\n      const rFee = parseFloat(card.annual_fee || 0);\n      const isFree = (jFee === 0 && rFee === 0);\n      return filterFee === 'free' ? isFree : !isFree;\n    });\n  }\n\n  // Double fallback\n  if (filteredCards.length === 0) {\n    filteredCards = onlyCreditCards.slice(0, 5);\n  }\n\n  staticData.filteredCards = filteredCards;\n  currentIndex = 0;\n}\n\nconst totalCards = filteredCards.length;\nif (currentIndex >= totalCards) currentIndex = 0;\n\nconst currentCard = filteredCards[currentIndex];\nconst cardId = String(currentCard.id || currentCard.uuid || currentCard._id || '0');\nconst nextIndex = (currentIndex + 1) % totalCards;\n\nconst cardTitle = `💳 *${currentCard.name || 'Credit Card'}*\\n` +\n  `🏦 *Bank:* ${currentCard.bank || 'Partner Bank'}\\n\\n` +\n  `✨ *Features:* ${currentCard.reward_points || currentCard.rewardPoints || currentCard.features || 'Rewards & Benefits'}\\n` +\n  `💰 *Joining Fee:* ₹${currentCard.joining_fee ?? currentCard.joiningFee ?? '0'}\\n` +\n  `🔄 *Renewal Fee:* ₹${currentCard.annual_fee ?? currentCard.renewal_fee ?? currentCard.annualFee ?? '0'}\\n\\n` +\n  `📄 *Card ${currentIndex + 1} of ${totalCards}*`;\n\nconst cardImageUrl = currentCard.image || currentCard.variant_image || currentCard.variantImage || '';\n\nconst buttons = [\n  {\n    type: \"reply\",\n    reply: { id: `apply_${cardId}`, title: \"✅ Apply Now\" }\n  },\n  {\n    type: \"reply\",\n    reply: { id: `learn_more_${cardId}`, title: \"ℹ️ Learn More\" }\n  }\n];\n\nif (totalCards > 1) {\n  buttons.push({\n    type: \"reply\",\n    reply: { id: `card_page_${nextIndex}`, title: \"Next ▶️\" }\n  });\n}\n\nreturn [{\n  json: {\n    user_id: userId,\n    type: \"interactive\",\n    interactive: {\n      type: \"button\",\n      ...(cardImageUrl ? {\n        header: {\n          type: \"image\",\n          image: { link: cardImageUrl }\n        }\n      } : {}),\n      body: { text: cardTitle },\n      action: { buttons: buttons }\n    }\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3040,
+        2016
+      ],
+      "id": "6e73f463-84a5-4025-9684-555d313c69f9",
+      "name": "cards fetching from db"
+    },
+    {
+      "parameters": {
+        "jsCode": "const staticData = $getWorkflowStaticData('global');\nstaticData.userStates = staticData.userStates || {};\n\nconst userId = String($json.user_id || '').trim();\nconst userText = String($json.text || '').trim();\nconst buttonId = String($json.button_id || '').trim();\nconst lowerText = userText.toLowerCase();\n\nlet userState = staticData.userStates[userId] || {};\n\n// 🧹 Reset Session\nif (['/start', '/reset', 'clear', 'cancel', 'exit'].includes(lowerText)) {\n  delete staticData.userStates[userId];\n  return [{\n    json: {\n      user_id: userId,\n      is_lead_flow: true,\n      lead_complete: false,\n      reply_type: \"text\",\n      reply_message: \"👋 Session reset! Dobara shuru karne ke liye *'card chahiye'* likhein.\"\n    }\n  }];\n}\n\n// ==============================================================\n// 1️⃣ STEP 1: CATEGORY SELECTION (Lifetime Free vs Annual Fee)\n// ==============================================================\nconst isCardIntent = lowerText.includes('card') || ['hi', 'hello'].includes(lowerText) || buttonId === 'start_card_flow';\nconst isMidLeadCapture = ['AWAITING_NAME', 'AWAITING_PHONE', 'AWAITING_CIBIL_CONSENT', 'AWAITING_EMAIL'].includes(userState.step);\n\nif (isCardIntent && !isMidLeadCapture && !userState.step) {\n  staticData.userStates[userId] = {\n    step: 'AWAITING_FEE_CATEGORY',\n    lead_data: {}\n  };\n\n  return [{\n    json: {\n      user_id: userId,\n      is_lead_flow: true,\n      lead_complete: false,\n      reply_type: \"interactive\",\n      interactive: {\n        type: \"button\",\n        body: {\n          text: \"💳 *Finonest Credit Card Finder*\\n\\nAap kis category ka card prefer karte hain?\"\n        },\n        action: {\n          buttons: [\n            { type: \"reply\", reply: { id: \"cat_lifetime_free\", title: \"🆓 Lifetime Free\" } },\n            { type: \"reply\", reply: { id: \"cat_annual_fee\", title: \"💎 Annual Fee / Perks\" } }\n          ]\n        }\n      }\n    }\n  }];\n}\n\n// ==============================================================\n// 2️⃣ STEP 2: SHOW 8 CARD TYPES (LIST MENU)\n// ==============================================================\nif (userState.step === 'AWAITING_FEE_CATEGORY') {\n  let selectedFee = 'all';\n  if (buttonId === 'cat_lifetime_free' || lowerText.includes('free')) selectedFee = 'free';\n  else if (buttonId === 'cat_annual_fee' || lowerText.includes('annual')) selectedFee = 'paid';\n\n  userState.fee_preference = selectedFee;\n  userState.step = 'AWAITING_CARD_TYPE';\n\n  return [{\n    json: {\n      user_id: userId,\n      is_lead_flow: true,\n      lead_complete: false,\n      reply_type: \"interactive\",\n      interactive: {\n        type: \"list\",\n        header: { type: \"text\", text: \"🎯 Select Card Benefit\" },\n        body: { text: \"Aapko kis category par sabse zyada fayda chahiye? Menu se select karein:\" },\n        action: {\n          button: \"Card Types Dekhein\",\n          sections: [\n            {\n              title: \"Top Categories\",\n              rows: [\n                { id: \"type_shopping\", title: \"🛍️ Shopping / Cashback\", description: \"Amazon, Flipkart & online spends\" },\n                { id: \"type_fuel\", title: \"⛽ Fuel & Petrol\", description: \"Surcharge waiver & fuel points\" },\n                { id: \"type_travel\", title: \"✈️ Travel & Flights\", description: \"Airlines discount & air miles\" },\n                { id: \"type_lounge\", title: \"🛋️ Lounge Access\", description: \"Domestic & Intl lounge visits\" },\n                { id: \"type_dining\", title: \"🍽️ Dining & Food\", description: \"Zomato, Swiggy & restaurant offers\" },\n                { id: \"type_upi\", title: \"📲 RuPay UPI Credit\", description: \"UPI QR scan par rewards\" },\n                { id: \"type_rewards\", title: \"🎁 Rewards & Points\", description: \"All-rounder reward points\" },\n                { id: \"type_utility\", title: \"💡 Utility & Bill Pay\", description: \"Electricity, recharge & utility\" }\n              ]\n            }\n          ]\n        }\n      }\n    }\n  }];\n}\n\n// ==============================================================\n// 3️⃣ STEP 3: CARD TYPE RECEIVED -> ASK FULL NAME\n// ==============================================================\nif (userState.step === 'AWAITING_CARD_TYPE') {\n  let cardType = 'shopping';\n  if (buttonId.startsWith('type_')) cardType = buttonId.replace('type_', '');\n  else if (lowerText.includes('fuel')) cardType = 'fuel';\n  else if (lowerText.includes('travel')) cardType = 'travel';\n  else if (lowerText.includes('lounge')) cardType = 'lounge';\n  else if (lowerText.includes('dining')) cardType = 'dining';\n  else if (lowerText.includes('upi')) cardType = 'upi';\n  else if (lowerText.includes('utility')) cardType = 'utility';\n  else if (lowerText.includes('reward')) cardType = 'rewards';\n\n  userState.card_type = cardType;\n  userState.step = 'AWAITING_NAME';\n\n  return [{\n    json: {\n      user_id: userId,\n      is_lead_flow: true,\n      lead_complete: false,\n      reply_type: \"text\",\n      reply_message: \"Aapke liye best cards short-list karne ke liye, kripya apna *Full Name* (as per PAN Card) enter karein:\"\n    }\n  }];\n}\n\n// ==============================================================\n// 4️⃣ STEP 4: NAME RECEIVED -> ASK MOBILE NUMBER\n// ==============================================================\nif (userState.step === 'AWAITING_NAME') {\n  if (userText.length < 2) {\n    return [{\n      json: {\n        user_id: userId,\n        is_lead_flow: true,\n        lead_complete: false,\n        reply_type: \"text\",\n        reply_message: \"⚠️ Kripya apna valid *Full Name* enter karein:\"\n      }\n    }];\n  }\n\n  userState.lead_data.name = userText;\n  userState.step = 'AWAITING_PHONE';\n\n  const detectedNumber = userId.replace(/\\D/g, '').slice(-10);\n\n  return [{\n    json: {\n      user_id: userId,\n      is_lead_flow: true,\n      lead_complete: false,\n      reply_type: \"text\",\n      reply_message: `Thanks *${userText}*!\\n\\nKripya apna 10-digit *Mobile Number* enter karein (ya type karein *'same'* agar yahi number \\`${detectedNumber}\\` use karna hai):`\n    }\n  }];\n}\n\n// ==============================================================\n// 5️⃣ STEP 5: PHONE RECEIVED -> ASK CIBIL CHECK CONSENT\n// ==============================================================\nif (userState.step === 'AWAITING_PHONE') {\n  let finalPhone = '';\n  if (lowerText === 'same' || lowerText === 'yes') {\n    finalPhone = userId.replace(/\\D/g, '').slice(-10);\n  } else {\n    const phoneMatch = userText.match(/\\b[6-9]\\d{9}\\b/);\n    if (phoneMatch) finalPhone = phoneMatch[0];\n  }\n\n  if (!finalPhone || finalPhone.length !== 10) {\n    return [{\n      json: {\n        user_id: userId,\n        is_lead_flow: true,\n        lead_complete: false,\n        reply_type: \"text\",\n        reply_message: \"⚠️ *Invalid Number!* Kripya valid 10-digit mobile number enter karein ya *'same'* type karein:\"\n      }\n    }];\n  }\n\n  userState.lead_data.phone = finalPhone;\n  userState.step = 'AWAITING_CIBIL_CONSENT';\n\n  return [{\n    json: {\n      user_id: userId,\n      is_lead_flow: true,\n      lead_complete: false,\n      reply_type: \"interactive\",\n      interactive: {\n        type: \"button\",\n        body: {\n          text: `📊 *Credit Profile Verification*\\n\\n` +\n                `👤 *Name:* ${userState.lead_data.name}\\n` +\n                `📱 *Mobile:* ${finalPhone}\\n\\n` +\n                `Kya aap Finonest ko apna CIBIL/Credit Score check karne ki sehmati (consent) dete hain taaki hum 100% pre-approved cards match kar sakein?`\n        },\n        action: {\n          buttons: [\n            { type: \"reply\", reply: { id: \"cibil_consent_agree\", title: \"✅ Yes, Check CIBIL\" } },\n            { type: \"reply\", reply: { id: \"cibil_consent_reject\", title: \"❌ No, Skip CIBIL\" } }\n          ]\n        }\n      }\n    }\n  }];\n}\n\n// ==============================================================\n// 6️⃣ STEP 6: HANDLE CIBIL CONSENT (YES vs NO)\n// ==============================================================\nif (userState.step === 'AWAITING_CIBIL_CONSENT') {\n  if (buttonId === 'cibil_consent_agree' || lowerText === 'yes' || lowerText.includes('check')) {\n    const cibilPayload = {\n      name: userState.lead_data.name,\n      phone: userState.lead_data.phone,\n      fee_preference: userState.fee_preference,\n      card_type: userState.card_type\n    };\n\n    delete staticData.userStates[userId];\n\n    return [{\n      json: {\n        ...$json,\n        user_id: userId,\n        is_lead_flow: true,\n        is_cibil_trigger: true,\n        lead_info: cibilPayload\n      }\n    }];\n  }\n\n  if (buttonId === 'cibil_consent_reject' || lowerText === 'no' || lowerText.includes('skip')) {\n    userState.step = 'AWAITING_EMAIL';\n    return [{\n      json: {\n        user_id: userId,\n        is_lead_flow: true,\n        lead_complete: false,\n        reply_type: \"text\",\n        reply_message: \"Koi baat nahi! Hum bina credit check ke normal offers dikha denge.\\n\\nKripya apna valid *Email ID* enter karein:\"\n      }\n    }];\n  }\n}\n\n// ==============================================================\n// 7️⃣ STEP 7: EMAIL RECEIVED -> SAVE DATA & TRIGGER CAROUSEL\n// ==============================================================\nif (userState.step === 'AWAITING_EMAIL') {\n  const emailRegex = /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/;\n  if (!emailRegex.test(userText)) {\n    return [{\n      json: {\n        user_id: userId,\n        is_lead_flow: true,\n        lead_complete: false,\n        reply_type: \"text\",\n        reply_message: \"⚠️ Kripya ek valid *Email ID* enter karein (jaise: name@example.com):\"\n      }\n    }];\n  }\n\n  userState.lead_data.email = userText;\n  userState.step = 'VIEWING_CARDS';\n\n  const savedFee = userState.fee_preference || 'all';\n  const savedType = userState.card_type || 'shopping';\n  const filterKey = `filter_${savedFee}_${savedType}`;\n\n  return [{\n    json: {\n      ...$json,\n      user_id: userId,\n      button_id: filterKey,\n      fee_preference: savedFee,\n      card_type: savedType,\n      is_lead_flow: true,\n      trigger_carousel: true,\n      lead_info: userState.lead_data\n    }\n  }];\n}\n\n// ==============================================================\n// 8️⃣ STEP 8: USER CLICKS \"APPLY NOW\" -> TRIGGER PORTAL SUBMIT\n// ==============================================================\nif (buttonId.startsWith('apply_')) {\n  const selectedCardId = buttonId.replace('apply_', '');\n  \n  const completedLead = {\n    cardId: selectedCardId,\n    applicant_name: userState.lead_data?.name || 'Customer',\n    applicant_phone: userState.lead_data?.phone || userId.replace(/\\D/g, '').slice(-10),\n    applicant_email: userState.lead_data?.email || `${userId}@finonest.in`,\n    ip_address: $json.ip_address || '157.240.199.60'\n  };\n\n  delete staticData.userStates[userId];\n\n  return [{\n    json: {\n      ...$json,\n      user_id: userId,\n      is_lead_flow: true,\n      is_final_submit: true,\n      lead_complete: true,\n      lead_info: completedLead\n    }\n  }];\n}\n\n// Default: Normal AI Agent Queries\nreturn [{\n  json: {\n    ...$json,\n    user_id: userId,\n    is_lead_flow: false\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        48,
+        2352
+      ],
+      "id": "dcb1d77d-9fb5-4d3e-98b0-fab5e75bb183",
+      "name": "Code in JavaScript3"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "f6a4c2b9-3a3b-4d44-9699-2e018d2b23c7",
+              "leftValue": "={{ $('Code in JavaScript').first().json.button_id }}",
+              "rightValue": "TRIGGER",
+              "operator": {
+                "type": "string",
+                "operation": "startsWith"
+              }
+            },
+            {
+              "id": "b24e111d-14bb-442f-9e6c-2cdf6168bc9f",
+              "leftValue": "={{ $('Code in JavaScript').first().json.button_id }}",
+              "rightValue": "card_page_",
+              "operator": {
+                "type": "string",
+                "operation": "startsWith"
+              }
+            },
+            {
+              "id": "9ca64d90-82a6-489e-bf6d-5f1499a91d20",
+              "leftValue": "={{ $('Code in JavaScript').first().json.button_id }}",
+              "rightValue": "learn_more_",
+              "operator": {
+                "type": "string",
+                "operation": "startsWith"
+              }
+            },
+            {
+              "id": "2b9cdb34-d564-4ccc-8e53-414b53fc27e7",
+              "leftValue": "={{ $('Code in JavaScript').first().json.button_id }}",
+              "rightValue": "apply_",
+              "operator": {
+                "type": "string",
+                "operation": "startsWith"
+              }
+            },
+            {
+              "id": "5d5d1813-6a79-49b5-80c0-19e981e0df83",
+              "leftValue": "={{ $('Code in JavaScript').first().json.button_id }}",
+              "rightValue": "filter_",
+              "operator": {
+                "type": "string",
+                "operation": "startsWith"
+              }
+            },
+            {
+              "id": "ad6ce2e6-e6bb-4a12-96e3-af40cd1810b4",
+              "leftValue": "={{ $('Code in JavaScript').first().json.button_id }}",
+              "rightValue": "type_",
+              "operator": {
+                "type": "string",
+                "operation": "startsWith"
+              }
+            },
+            {
+              "id": "6e47153a-09a8-4329-8593-ce7f97596937",
+              "leftValue": "={{ $json.button_id }}",
+              "rightValue": "filter_",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {
+          "ignoreCase": true
+        }
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        2336,
+        2368
+      ],
+      "id": "24cb82e4-680f-4e91-a1af-bd2d363e1cdc",
+      "name": "check crousel"
+    },
+    {
+      "parameters": {
+        "content": "this if checks for crousel on true it sends cards \n"
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        2240,
+        2272
+      ],
+      "typeVersion": 1,
+      "id": "6842615b-52e2-4dfc-bbc0-c520ed6deca0",
+      "name": "Sticky Note8"
+    },
+    {
+      "parameters": {
+        "content": "Working: Yeh conversation ki Chat History (Context) yaad rakhta hai.How It Works: Jab user pehla message bhejta hai (e.g., \"Mujhe Axis bank card chahiye\"), aur dusra message bhejta hai (\"Uske features kya hain?\"), toh Buffer Memory AI Agent ko pichle $N$ messages ka context pas karti hai taaki Agent ko pata rahe ki \"Uske\" matlab Axis bank card ki baat ho rahi hai.Why Needed? Stateless AI calls ko conversational stateful memory provide karta hai.",
+        "height": 352,
+        "width": 230
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        1216,
+        2880
+      ],
+      "typeVersion": 1,
+      "id": "29c7ed27-6d6d-4f64-9016-04fcb241f0a8",
+      "name": "Sticky Note7"
+    },
+    {
+      "parameters": {
+        "content": "Working: Yeh Agent ka Dimaag (LLM) hai. User ke aaye hue text messages ko samajhna, context build karna, deciding capability rakhna ki kab konse tool ko call karna hai, aur user ko conversational reply framing karna – yeh sab kaam iska hai.\n\nWhy Attached Here? Agent node bina kisi Chat Model ke response process nahi kar sakta. Yeh har decision reasoning ke liye GPT-4/GPT-3.5 ko query karta hai.",
+        "height": 448
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        896,
+        2816
+      ],
+      "typeVersion": 1,
+      "id": "3b34b703-ab1c-4cf8-b2f4-19ddd211540a",
+      "name": "Sticky Note6"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "5210c7c7-98db-439e-a0d0-91b86ec711e7",
+              "leftValue": "={{ $json.is_final_submit }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        544,
+        1824
+      ],
+      "id": "8abe2b28-562a-405b-bc14-f4ffa31c6393",
+      "name": "If4"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://cardbackend.finonest.com/api/third-party/leads",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "=",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJDSFRFOTc4NDMiLCJyb2xlIjoiZHNhX3BhcnRuZXIiLCJpc0FwaUtleSI6dHJ1ZSwiaWF0IjoxNzg1OTM1NjYzfQ.f84qqvSlL5W7ED1ArR5BjmW_0I2DzIfLtSwz3Td39_o"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{\n  JSON.stringify({\n    cardId: $json.lead_info.cardId,\n    applicant_name: $json.lead_info.applicant_name,\n    applicant_phone: $json.lead_info.applicant_phone,\n    applicant_email: $json.lead_info.applicant_email,\n    ip_address: $('Webhook1').first().json.headers['x-forwarded-for']?.split(',')[0]?.trim() || $('Webhook1').first().json.headers['x-real-ip'] ,\n    source: \"whatsapp_bot\"\n  })\n}}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1408,
+        1808
+      ],
+      "id": "917e78a2-7e5a-418c-8c48-aa9ef2a2d419",
+      "name": "HTTP Request6"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "82bf605b-24d3-4d0d-ab41-6ae97896cae0",
+              "leftValue": "={{ $json.is_lead_flow }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        384,
+        2352
+      ],
+      "id": "6b4ecc7b-4de4-4368-83a3-793219830306",
+      "name": "If3"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://graph.facebook.com/v20.0/1337138352807795/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type ",
+              "value": "application/json"
+            },
+            {
+              "name": "Authorization",
+              "value": "Bearer EAAjSMAAWZCZAgBSavZCNkbZCThJ7p71JGxewZB4YfcUsXYyMQSNB1QYZAL6wZAYYfUpdV95TWEG4eQZAdpkVBeNWisfeEKsRcCIeoETrRYfect65gs0g0M4vAKZBxuP8yn6kQV1vZBh1gJWyOV2MwRUQc35154ngGI0ZBcLVipQaZC8wfQoyLUcZCV21xZA85hAFkhRLiHxwZDZD"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{\n  JSON.stringify({\n    messaging_product: \"whatsapp\",\n    recipient_type: \"individual\",\n    to: $json.user_id,\n    type: $json.type || ($json.interactive ? \"interactive\" : \"text\"),\n    ...($json.interactive ? { interactive: $json.interactive } : {}),\n    ...($json.text ? { text: typeof $json.text === 'object' ? $json.text : { body: $json.text } } : {})\n  })\n}}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        3456,
+        2016
+      ],
+      "id": "9df45323-8fb5-4218-b770-03b0ba9ff944",
+      "name": "HTTP Request1"
+    },
+    {
+      "parameters": {
+        "url": "https://cardbackend.finonest.com/api/third-party/cards?type=all",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "=",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJDSFRFOTc4NDMiLCJyb2xlIjoiZHNhX3BhcnRuZXIiLCJpc0FwaUtleSI6dHJ1ZSwiaWF0IjoxNzg1OTM1NjYzfQ.f84qqvSlL5W7ED1ArR5BjmW_0I2DzIfLtSwz3Td39_o"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        2656,
+        2016
+      ],
+      "id": "d1a36b7a-c516-4c6d-8e51-69decbadff50",
+      "name": "HTTP Request"
+    },
+    {
+      "parameters": {
+        "model": "=openai/text-embedding-3-large",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.embeddingsOpenAi",
+      "typeVersion": 1.2,
+      "position": [
+        1328,
+        608
+      ],
+      "id": "6289ce5c-ba2e-421d-b443-175c3bc839c6",
+      "name": "Embeddings OpenAI",
+      "credentials": {
+        "openAiApi": {
+          "id": "EcW71cyFRxr6ZZqr",
+          "name": "OpenAI account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "name": "company_data",
+        "description": "Use this tool to search and retrieve company documents, product details, services, loans, credit cards, fees, and FAQs. Query this tool whenever the user asks about products, eligibility, offerings, or company policies. For simple greetings or casual conversation, answer directly without calling this tool."
+      },
+      "id": "46347cfc-b4e7-4627-a991-3f30c12d7f42",
+      "name": "RAG",
+      "type": "@n8n/n8n-nodes-langchain.toolVectorStore",
+      "position": [
+        2320,
+        3088
+      ],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "model": "=openai/text-embedding-3-large",
+        "options": {}
+      },
+      "id": "c950482d-23e3-4318-a878-f80f8cfee556",
+      "name": "Embeddings OpenAI2",
+      "type": "@n8n/n8n-nodes-langchain.embeddingsOpenAi",
+      "position": [
+        2240,
+        3728
+      ],
+      "typeVersion": 1.2,
+      "credentials": {
+        "openAiApi": {
+          "id": "EcW71cyFRxr6ZZqr",
+          "name": "OpenAI account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "qdrantCollection": {
+          "__rl": true,
+          "value": "finorules",
+          "mode": "list",
+          "cachedResultName": "finorules"
+        },
+        "options": {}
+      },
+      "id": "16ca729c-9492-4af1-a02f-9b3e5b4ebc43",
+      "name": "Retrive Qdrant Vector Store",
+      "type": "@n8n/n8n-nodes-langchain.vectorStoreQdrant",
+      "position": [
+        2240,
+        3360
+      ],
+      "typeVersion": 1,
+      "credentials": {
+        "qdrantApi": {
+          "id": "Z7aWGq7rRxqtvL74",
+          "name": "Qdrant account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "openai/gpt-4o-mini",
+          "mode": "list",
+          "cachedResultName": "openai/gpt-4o-mini"
+        },
+        "options": {}
+      },
+      "id": "b0928ee4-2c6a-4bc0-a013-15504f157379",
+      "name": "OpenAI Chat Model1",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "position": [
+        2528,
+        3184
+      ],
+      "typeVersion": 1.2,
+      "credentials": {
+        "openAiApi": {
+          "id": "EcW71cyFRxr6ZZqr",
+          "name": "OpenAI account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "## Configure AI Agent\nSet System prompt and chat model. If you want you can set any tools",
+        "height": 260,
+        "width": 380
+      },
+      "id": "df4f90ab-1cbb-4335-893a-0f3e2a62be04",
+      "name": "Sticky Note5",
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        752,
+        2256
+      ],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "content": "# STEP 2\n\n\n\n\n\n\n\n\n\n\n\n\n## Documents vectorization with Qdrant and Google Drive\nChange:\n- QDRANTURL\n- COLLECTION",
+        "height": 400,
+        "width": 620,
+        "color": 4
+      },
+      "id": "df7bc44c-fb7d-4bc4-bc79-245f53e17eca",
+      "name": "Sticky Note4",
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        656,
+        304
+      ],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "content": "# STEP 1\n\n## Create Qdrant Collection\nChange:\n- QDRANTURL\n- COLLECTION",
+        "height": 268,
+        "width": 320,
+        "color": 6
+      },
+      "id": "ff1ebe0d-b572-4b77-ad67-351c0ec17927",
+      "name": "Sticky Note3",
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        48,
+        256
+      ],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "sessionIdType": "customKey",
+        "sessionKey": "={{ $json.is_valid_message }}",
+        "contextWindowLength": 6
+      },
+      "id": "401a8204-4cea-4bd0-9ae7-8c5c6797c586",
+      "name": "Window Buffer Memory",
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "position": [
+        1456,
+        2944
+      ],
+      "typeVersion": 1.3
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "959fbffc-876a-4235-87be-2dedba4926cd",
+              "operator": {
+                "type": "string",
+                "operation": "exists",
+                "singleValue": true
+              },
+              "leftValue": "={{ $json.is_valid_message }}",
+              "rightValue": ""
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "02ae9009-b34b-49a5-86f2-50e681125d77",
+      "name": "is Message?",
+      "type": "n8n-nodes-base.if",
+      "position": [
+        -160,
+        2576
+      ],
+      "typeVersion": 2.2
+    },
+    {
+      "parameters": {
+        "content": "## Important!\n### Configure the webhook nodes this way:\n* Make sure that both *Verify* and *Respond* have the same URL\n* *Verify* should have GET HTTP Method\n* *Respond* should have POST HTTP Method",
+        "height": 305,
+        "width": 405,
+        "color": 3
+      },
+      "id": "b3306890-d527-44d9-bd42-2decd61b35a2",
+      "name": "Sticky Note2",
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -1104,
+        2352
+      ],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "chunkSize": 300,
+        "chunkOverlap": 30
+      },
+      "id": "7df52ba0-011e-44a5-b25d-a4610f903ed9",
+      "name": "Token Splitter",
+      "type": "@n8n/n8n-nodes-langchain.textSplitterTokenSplitter",
+      "position": [
+        1520,
+        720
+      ],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "dataType": "binary",
+        "options": {}
+      },
+      "id": "bdc58292-5880-41b9-bc55-d6437f037629",
+      "name": "Default Data Loader",
+      "type": "@n8n/n8n-nodes-langchain.documentDefaultDataLoader",
+      "position": [
+        1520,
+        528
+      ],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "operation": "download",
+        "fileId": {
+          "__rl": true,
+          "value": "1L4n26wyMveDDys0-gN-0hMESHf9PiNvh",
+          "mode": "list",
+          "cachedResultName": "FINONEST ENTERPRISE KNOWLEDGE BASE",
+          "cachedResultUrl": "https://docs.google.com/document/d/1L4n26wyMveDDys0-gN-0hMESHf9PiNvh/edit?usp=drivesdk&ouid=108531905380067658958&rtpof=true&sd=true"
+        },
+        "options": {
+          "googleFileConversion": {
+            "conversion": {
+              "docsToFormat": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+              "drawingsToFormat": "application/pdf"
+            }
+          }
+        }
+      },
+      "id": "c14e570d-527d-4cc2-b0c0-2406b814ffc6",
+      "name": "Download Files",
+      "type": "n8n-nodes-base.googleDrive",
+      "position": [
+        1120,
+        368
+      ],
+      "typeVersion": 3,
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "D0MO5a3sKjLx2oBz",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "fileFolder",
+        "queryString": "name=FINONEST ENTERPRISE KNOWLEDGE BASE",
+        "filter": {
+          "folderId": {
+            "__rl": true,
+            "value": "1l8PmqmBm1kI_Dw0B_u5H-nn10kNLB9Id",
+            "mode": "list",
+            "cachedResultName": "n8nrules",
+            "cachedResultUrl": "https://drive.google.com/drive/folders/1l8PmqmBm1kI_Dw0B_u5H-nn10kNLB9Id"
+          }
+        },
+        "options": {}
+      },
+      "id": "71c8817f-f5be-4900-aecc-14d483993c4c",
+      "name": "Get folder",
+      "type": "n8n-nodes-base.googleDrive",
+      "position": [
+        896,
+        368
+      ],
+      "typeVersion": 3,
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "D0MO5a3sKjLx2oBz",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://f1a27f5b-05d3-409f-9ee2-10cede1bd6c0.us-west-1-0.aws.cloud.qdrant.io/collections/finorules/points/delete",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"filter\": {}\n}",
+        "options": {}
+      },
+      "id": "b61d5d74-14d2-4488-a0d6-3f7df9745329",
+      "name": "Refresh collection",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [
+        672,
+        368
+      ],
+      "typeVersion": 4.2,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "kjoh4kFxMCYxWaca",
+          "name": "Header Auth account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "insert",
+        "qdrantCollection": {
+          "__rl": true,
+          "value": "finorules",
+          "mode": "list",
+          "cachedResultName": "finorules"
+        },
+        "options": {}
+      },
+      "id": "99de11b0-ab4a-49fe-977b-b3102c9ff1cf",
+      "name": "Qdrant Vector Store",
+      "type": "@n8n/n8n-nodes-langchain.vectorStoreQdrant",
+      "position": [
+        1360,
+        368
+      ],
+      "typeVersion": 1,
+      "credentials": {
+        "qdrantApi": {
+          "id": "Z7aWGq7rRxqtvL74",
+          "name": "Qdrant account"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "id": "55970db5-284d-40b9-ad6f-f43b513aac45",
+      "name": "When clicking ‘Test workflow’",
+      "type": "n8n-nodes-base.manualTrigger",
+      "position": [
+        256,
+        384
+      ],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "=gpt-4o-mini",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "id": "cfed3c49-be8a-4d1a-aa3a-5e60a19c00ac",
+      "name": "OpenAI Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "position": [
+        1040,
+        3024
+      ],
+      "typeVersion": 1.2,
+      "credentials": {
+        "openAiApi": {
+          "id": "EcW71cyFRxr6ZZqr",
+          "name": "OpenAI account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "# STEP 4\n\n## RAG System\n\n\n\n\n\n\n\n\n\n\n\n\n\n* *Respond* webhook receives various POST Requests from Meta regarding WhatsApp messages (user messages + status notifications)\n* Check if the incoming JSON contains user message\n* Echo back the text message to the user. This is a custom message, not a WhatsApp Business template message\n",
+        "height": 629,
+        "width": 459
+      },
+      "id": "22fe09e5-053c-4f80-9e44-71f533492e31",
+      "name": "Sticky Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        2192,
+        3024
+      ],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.text }}",
+        "options": {
+          "systemMessage": "You are Finonest Assistant. \nAnswer user questions politely and briefly in Hindi/Hinglish.\nIf the user asks about credit cards, just tell them: \"Credit cards dekhne ke liye 'card chahiye' likhein.\"\nNEVER ask for fee preferences or list card categories yourself."
+        }
+      },
+      "id": "8e24d1bc-8e65-4562-8cc4-4ce9c917841b",
+      "name": "AI Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "position": [
+        1056,
+        2368
+      ],
+      "typeVersion": 1.7
+    },
+    {
+      "parameters": {
+        "path": "whatsapp-webhook",
+        "responseMode": "responseNode",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "text/plain"
+              }
+            ]
+          }
+        }
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -1312,
+        1968
+      ],
+      "id": "853aaa4a-e622-40fd-94a8-9d924c4ceedb",
+      "name": "Webhook",
+      "webhookId": "b1e44641-2928-4b68-95d1-4ef801483186"
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.query['hub.challenge'] || $json.query['hub_challenge'] }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        -816,
+        1968
+      ],
+      "id": "de122d7a-b971-4a78-9540-cdeb160eb876",
+      "name": "Respond to Webhook"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "whatsapp-webhook",
+        "options": {
+          "responseCode": {
+            "values": {}
+          }
+        }
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -912,
+        2576
+      ],
+      "id": "bc4aef8f-f474-48b0-b20d-dfedeffe7898",
+      "name": "Webhook1",
+      "webhookId": "b1e44641-2928-4b68-95d1-4ef801483186"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://graph.facebook.com/v20.0/1337138352807795/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "specifyHeaders": "=keypair",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer EAAjSMAAWZCZAgBSavZCNkbZCThJ7p71JGxewZB4YfcUsXYyMQSNB1QYZAL6wZAYYfUpdV95TWEG4eQZAdpkVBeNWisfeEKsRcCIeoETrRYfect65gs0g0M4vAKZBxuP8yn6kQV1vZBh1gJWyOV2MwRUQc35154ngGI0ZBcLVipQaZC8wfQoyLUcZCV21xZA85hAFkhRLiHxwZDZD"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{\n  JSON.stringify({\n    messaging_product: \"whatsapp\",\n    recipient_type: \"individual\",\n    to: $json.user_id,\n    type: \"text\",\n    text: {\n      preview_url: false,\n      body: $json.output || $('AI Agent').first().json.output || \"Namaste! Main aapki kya madad kar sakta hoon?\"\n    }\n  })\n}}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        3024,
+        2384
+      ],
+      "id": "49e9d0a1-c15f-48f6-9554-e3d2c8d8e96c",
+      "name": "HTTP Request2",
+      "credentials": {
+        "httpBearerAuth": {
+          "id": "EHVvc7cPpPfKgCyH",
+          "name": "Bearer Auth account"
+        },
+        "httpHeaderAuth": {
+          "id": "kjoh4kFxMCYxWaca",
+          "name": "Header Auth account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://graph.facebook.com/v20.0/1337138352807795/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer EAAjSMAAWZCZAgBSavZCNkbZCThJ7p71JGxewZB4YfcUsXYyMQSNB1QYZAL6wZAYYfUpdV95TWEG4eQZAdpkVBeNWisfeEKsRcCIeoETrRYfect65gs0g0M4vAKZBxuP8yn6kQV1vZBh1gJWyOV2MwRUQc35154ngGI0ZBcLVipQaZC8wfQoyLUcZCV21xZA85hAFkhRLiHxwZDZD"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{\n  JSON.stringify({\n    messaging_product: \"whatsapp\",\n    recipient_type: \"individual\",\n    to: $json.user_id,\n    type: $json.reply_type || \"text\",\n    [$json.reply_type === \"interactive\" ? \"interactive\" : \"text\"]: \n      $json.reply_type === \"interactive\" \n        ? $json.interactive \n        : { preview_url: false, body: $json.reply_message || \"Select an option\" }\n  })\n}}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1344,
+        2128
+      ],
+      "id": "35587996-6d33-493b-a4a1-c9812ba2b85b",
+      "name": "HTTP Request7",
+      "credentials": {
+        "httpBearerAuth": {
+          "id": "EHVvc7cPpPfKgCyH",
+          "name": "Bearer Auth account"
+        },
+        "httpHeaderAuth": {
+          "id": "kjoh4kFxMCYxWaca",
+          "name": "Header Auth account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://graph.facebook.com/v20.0/1337138352807795/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer EAAjSMAAWZCZAgBSavZCNkbZCThJ7p71JGxewZB4YfcUsXYyMQSNB1QYZAL6wZAYYfUpdV95TWEG4eQZAdpkVBeNWisfeEKsRcCIeoETrRYfect65gs0g0M4vAKZBxuP8yn6kQV1vZBh1gJWyOV2MwRUQc35154ngGI0ZBcLVipQaZC8wfQoyLUcZCV21xZA85hAFkhRLiHxwZDZD"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{\n  JSON.stringify({\n    messaging_product: \"whatsapp\",\n    recipient_type: \"individual\",\n    to: $('Code in JavaScript').first().json.user_id,\n    type: \"text\",\n    text: {\n      preview_url: true,\n      body: `🎉 *Application Submitted Successfully!*\\n\\n` +\n            `📌 *Name:* ${$json.data.applicant_name}\\n` +\n            `💳 *Card:* ${$json.data.card_name}\\n` +\n            `🆔 *Lead ID:* ${$json.lead_id}\\n\\n` +\n            `🔗 *Complete your bank application here:*\\n${$json.utm_link || $json.redirect_url}\\n\\n` +\n            `Hamari Finonest team aapse jald hi verification ke liye contact karegi!`\n    }\n  })\n}}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1712,
+        1808
+      ],
+      "id": "b952e5da-1a5e-4af9-99c4-3383283dcbe9",
+      "name": "HTTP Request8",
+      "credentials": {
+        "httpBearerAuth": {
+          "id": "EHVvc7cPpPfKgCyH",
+          "name": "Bearer Auth account"
+        },
+        "httpHeaderAuth": {
+          "id": "kjoh4kFxMCYxWaca",
+          "name": "Header Auth account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "97c7960a-3554-4efa-a6d1-605c973b1978",
+              "leftValue": "={{ $json.trigger_carousel }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        800,
+        2032
+      ],
+      "id": "9a7ee02c-5652-4288-aec6-153197be1c47",
+      "name": "If"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Code in JavaScript5": {
+      "main": [
+        [
+          {
+            "node": "check crousel",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "cards fetching from db": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "is Message?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "check crousel": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "HTTP Request2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript3": {
+      "main": [
+        [
+          {
+            "node": "If3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If4": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request6",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request6": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request8",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If3": {
+      "main": [
+        [
+          {
+            "node": "If4",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "cards fetching from db",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Retrive Qdrant Vector Store": {
+      "ai_vectorStore": [
+        [
+          {
+            "node": "RAG",
+            "type": "ai_vectorStore",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Embeddings OpenAI2": {
+      "ai_embedding": [
+        [
+          {
+            "node": "Retrive Qdrant Vector Store",
+            "type": "ai_embedding",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model1": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "RAG",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "is Message?": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript3",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Token Splitter": {
+      "ai_textSplitter": [
+        [
+          {
+            "node": "Default Data Loader",
+            "type": "ai_textSplitter",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get folder": {
+      "main": [
+        [
+          {
+            "node": "Download Files",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Refresh collection": {
+      "main": [
+        [
+          {
+            "node": "Get folder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Embeddings OpenAI": {
+      "ai_embedding": [
+        [
+          {
+            "node": "Qdrant Vector Store",
+            "type": "ai_embedding",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Default Data Loader": {
+      "ai_document": [
+        [
+          {
+            "node": "Qdrant Vector Store",
+            "type": "ai_document",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download Files": {
+      "main": [
+        [
+          {
+            "node": "Qdrant Vector Store",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "When clicking ‘Test workflow’": {
+      "main": [
+        [
+          {
+            "node": "Refresh collection",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Window Buffer Memory": {
+      "ai_memory": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript5",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "RAG": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook1": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request7": {
+      "main": [
+        []
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "HTTP Request7",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "d4269dd1-a910-4c0f-bf49-6842ae97e773",
+  "meta": {
+    "templateId": "2845",
+    "templateCredsSetupCompleted": true,
+    "instanceId": "0baacc6d3b1a6dd3eab5716d8a9a865daa234021d8ab6749c055716aa71084ea"
+  },
+  "nodeGroups": [],
+  "id": "gJnFk2enfecRvejl",
+  "tags": []
+}
