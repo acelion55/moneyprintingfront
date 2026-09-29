@@ -25,6 +25,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     { name: 'WhatsApp Automation', path: '/dashboard/whatsapp', icon: MessageSquare, badge: 'Active Module' },
     { name: 'IVR Cloud Calling', path: '/dashboard/ivr-calling', icon: PhoneCall, badge: 'Coming Soon' },
     { name: 'AI Voice Calling', path: '/dashboard/ai-calling', icon: Bot, badge: 'Coming Soon' },
+    { name: 'Profile & Settings', path: '/dashboard/profile', icon: User, badge: 'User Settings' },
     ...(user?.role === 'admin'
       ? [
           { name: 'Leads', path: '/dashboard/leads', icon: Mail, badge: 'Admin Only' },
@@ -87,7 +88,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
         {/* Sticky bottom — user profile */}
         <div className="flex-shrink-0 p-4 border-t border-white/10 space-y-2">
-          <div className="flex items-center gap-2">
+          <Link href="/dashboard/profile" className="flex items-center gap-2 hover:opacity-80 transition-opacity">
             <div className="w-7 h-7 rounded-full bg-purple-500/20 border border-purple-500/40 flex items-center justify-center text-purple-300 flex-shrink-0">
               <User className="w-3.5 h-3.5" />
             </div>
@@ -95,7 +96,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               <div className="text-xs font-medium text-white truncate">{user?.name || 'User'}</div>
               <div className="text-[10px] text-gray-500 truncate">{user?.tenantId || 'Tenant'}</div>
             </div>
-          </div>
+          </Link>
           <button
             onClick={() => logout()}
             className="w-full flex items-center justify-center gap-1.5 py-1.5 rounded-lg bg-white/5 hover:bg-red-500/20 text-gray-400 hover:text-red-400 text-[11px] font-medium transition-colors"
